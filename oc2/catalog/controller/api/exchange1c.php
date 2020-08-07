@@ -223,10 +223,84 @@ class ControllerApiExchange1c extends Controller
 
     private function load_image()
     {
-        $input_image = file_get_contents('php://input');
+
         $image_name = $_GET['filename'];
 
+        $folder_name = 'import_1c/';
+        $folder_path = $this->create_or_get_directory(DIR_IMAGE . $folder_name);
+
+        if ($image_name) {
+
+            $this->add_to_log($image_name . ' картинки получена и открыта');
+            echo "$image_name картинки получена и открыта";
+
+            if (file_exists ($folder_path . $image_name)){
+                echo "Файд существует";
+                return false;
+            }
+
+            $input_image = file_get_contents('php://input');
+
+            $saved_file = file_put_contents($folder_path . $image_name, $input_image);
+
+            if ($saved_file) {
+                $this->add_to_log($image_name . ' картинки сохранена');
+                echo "$image_name картинка сохранена";
+
+            }
+        } else{
+            return false;
+        }
+
+        //Установка картинки в товар
+        $image_name_first_part = $this->get_filename_first_part($image_name, '_');
+
+        $sql_get_product_main_image =
+            "SELECT product_id, id_1c, image FROM " . DB_PREFIX .  "product " .
+            "WHERE REPLACE(id_1c , '-' , '') = '" . $this->db->escape($image_name_first_part) . "'";
+
+        $query = $this->db->query($sql_get_product_main_image);
+
+        $this->add_to_log('Запрос 1 в функции load_image выполнен');
+
+        if($query->num_rows == 0){
+            $this->add_to_log('НЕ найден товар с идентификатором ' . $image_name_first_part);
+            return false;
+        }
+
+        $product_id = (int)$query->row['product_id'];
+
+        if ( $query->row['image'] == ''){
+            echo "Основная";
+            //Загружаем картинки как оснвную
+            $sql_main_image =
+                "UPDATE " . DB_PREFIX . "product SET image = '" .
+                $this->db->escape($folder_name . $image_name) .
+                "' WHERE product_id =" . $product_id;
+
+            $query = $this->db->query($sql_main_image);
+
+            echo "добавили как основную";
+
+        } else{
+            //Загружаем картинки как НЕ оснвные
+            echo "НЕОсновная";
+            $sql_image =
+                "INSERT INTO " . DB_PREFIX . "product_image SET product_id = '" . $product_id .
+                "', image = '" . $this->db->escape($folder_name . $image_name) . "'";
+
+            $query = $this->db->query($sql_image);
+            echo "добавили как неосновную";
+        }
     }
+
+    private function get_filename_first_part($file_name, $delimeter){
+
+        $pieces = explode($delimeter, $file_name);
+
+        return $pieces[0];
+    }
+
 
     private function load_products($products)
     {
@@ -650,5 +724,16 @@ class ControllerApiExchange1c extends Controller
         return $exists_categories;
 
     }
+
+    function create_or_get_directory($path){
+
+        if (!file_exists($path)) {
+            mkdir($path, 0777);
+            $this->add_to_log("Создана дирректория " . $path);
+        }
+
+        return $path;
+    }
+
 
 }
