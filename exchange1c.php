@@ -1,24 +1,15 @@
 <?php
 /*
-В таблице товаров важно создать ограничение на уникальность поля МОДЕЛЬ, чтобы не дублировать товары
-1. ALTER TABLE oc_product
+В таблицах товаров и категорий важно создать ограничение на уникальность поля product_id_1c,
+category_id_1c, чтобы не дублировать товары
 
-ALTER TABLE oc_product ADD COLUMN id_1c VARCHAR(100) UNIQUE;
+ALTER TABLE oc_product ADD COLUMN product_id_1c VARCHAR(100) UNIQUE;
+ALTER TABLE oc_product ADD UNIQUE (product_id_1c);
 
-ALTER TABLE oc_product ADD UNIQUE (id_1c);
+Возможно будет ошибка в пункте 1: Invalid default value for 'date_available'
+Для этого нужно установить дефолтные значения для этого поля '2000-01-01'
 
-ADD COLUMN id_1c VARCHAR(100) UNIQUE;
-
-$this->db->query("ALTER TABLE " . DB_PREFIX . "product ADD UNIQUE (model)");
-
-ИЛИ до устанновки и распаковки в файлу opencart.sql добавить строку в место, где создаетсф таблица oc_product
-
-ВОзможно будет ошибка в пункте 1: Invalid default value for 'date_available'
-Для этого установим значение по умолчанию для date_available
-ALTER TABLE oc_product CHANGE COLUMN date_available date_available DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP;
-или вариант 2
-`date_available` date NOT NULL DEFAULT '0000-00-00',
-
+ALTER TABLE oc_product CHANGE COLUMN date_available date_available DATETIME NOT NULL DEFAULT '2001-01-01';
 */
 
 
@@ -26,52 +17,96 @@ class ControllerApiExchange1c extends Controller
 {
     public $response_body = array();
 
-    public function index(){
-        $this->add_to_log("Старт общего тестирования");
+    public $message = array();
+
+    public function index()
+    {
+
+        $input_json = file_get_contents('php://input');
+        $decode_input = json_decode($input_json, true);
+
+        //print_r($decode_input['categories']);
+
+        $this->add_to_response_message('first row');
+
+        $this->send_response_message();
 
     }
 
     public function load_data()
     {
 
-        $this->add_to_log('Старт функции load_data ' . $_SERVER["CONTENT_TYPE"]);  // отладка
-
         if ($_SERVER["CONTENT_TYPE"] == "application/json" && $_SERVER['REQUEST_METHOD'] == "POST") {
+
+            $this->prepare_db();
+
+            $this->add_to_response_message("Загрузка json");
             $this->load_json();
+
+            //отправка отчета
+            $this->send_response_message();
 
         } elseif (strstr($_SERVER["CONTENT_TYPE"], "image") && $_SERVER['REQUEST_METHOD'] == "POST") {
             $this->load_image();
         }
 
-        $this->response_body['type'] = $_SERVER["CONTENT_TYPE"]; // отладка
-        $this->send_response_message();
+    }
+
+    private function prepare_db()
+    {
+
+        //Проверяем наличие ограничения UNIQUE для таблицы товаров
+
+        $sql_check = "select * from INFORMATION_SCHEMA.TABLE_CONSTRAINTS where " .
+            " CONSTRAINT_TYPE='UNIQUE' and TABLE_SCHEMA = '" . DB_DATABASE .
+            "' and CONSTRAINT_NAME = 'product_id_1c' and table_name = '" . DB_PREFIX .  "product' ";
+
+        $query = $this->sql_query($sql_check);
+
+        if ($query->num_rows == 0){
+            $sql_add_constraint_product = "ALTER TABLE " . DB_PREFIX . "product ADD UNIQUE (product_id_1c)";
+            $this->sql_query($sql_add_constraint_product);
+        }
+        //Проверяем наличие ограничения UNIQUE для таблицы категорий
+        $sql_check = "select * from INFORMATION_SCHEMA.TABLE_CONSTRAINTS where " .
+            " CONSTRAINT_TYPE='UNIQUE' and TABLE_SCHEMA = '" . DB_DATABASE .
+            "' and CONSTRAINT_NAME = 'category_id_1c' and table_name = '" . DB_PREFIX .  "category' ";
+
+        $query = $this->sql_query($sql_check);
+
+        if ($query->num_rows == 0) {
+            $sql_add_constraint_category = "ALTER TABLE " . DB_PREFIX . "category ADD UNIQUE (category_id_1c)";
+            $this->sql_query($sql_add_constraint_category);
+        }
 
     }
 
     private function load_json()
     {
 
-        $this->add_to_log('Старт функции load_json'); //отладка
-
         $input_json = file_get_contents('php://input');
         $decode_input = json_decode($input_json, true);
 
         if (isset($decode_input['categories'])) {
+            $this->add_to_response_message("Загрузка категорий");
             $this->load_categories($decode_input['categories']);
         }
 
         if (isset($decode_input['products'])) {
+            $this->add_to_response_message("Загрузка товаров");
             $this->load_products($decode_input['products']);
         }
 
         if (isset($decode_input['stock_balance'])) {
+            $this->add_to_response_message("Загрузка остатков");
             $this->load_stock_balance($decode_input['stock_balance']);
         }
     }
 
     private function send_response_message()
     {
-        $response_json = json_encode($this->response_body);
+        $response = array('message' => $this->message);
+        $response_json = json_encode($response);
 
         $this->response->addHeader('Content-Type: application/json');
         $this->response->setOutput($response_json);
@@ -80,16 +115,18 @@ class ControllerApiExchange1c extends Controller
     private function load_categories($categories_from_json)
     {
 
-        $this->add_to_log('Старт функции load_categories');  //отладка
+        foreach ($categories_from_json as $category_from_json) {
 
-        $exists_categories = $this->get_exists_categories();
+            $category_id_1c = $category_from_json['category_id_1c'];
 
-        foreach ($categories_from_json as $category_name) {
+            $category_from_opencart = $this->category_in_list($category_id_1c);
 
-            $it_exist = in_array($category_name, $exists_categories);
-
-            if (!$it_exist) {
-                $this->create_category($category_name);
+            if (!$category_from_opencart) {
+                $this->add_to_response_message("Создаем новую категорию " . $category_from_json['name']);
+                $this->create_category($category_from_json);
+            } else {
+                $this->add_to_response_message("Обновляем категорию " . $category_from_json['name']);
+                $this->update_category($category_from_opencart, $category_from_json);
             }
         }
     }
@@ -97,25 +134,19 @@ class ControllerApiExchange1c extends Controller
     private function load_products($products)
     {
 
-        $this->add_to_log('Старт функции load_products');   //отладка
-
         $exists_products_id_1c = $this->get_products_id_1c();
-        $exists_categories = $this->get_exists_categories();
 
         foreach ($products as $product_from_json) {
             $id_1c_from_json = $product_from_json['product_id_1c'];
 
             $id_of_exists_product = array_search($id_1c_from_json, $exists_products_id_1c);
 
-            $this->add_to_log('id_1c_from_json ' . $id_1c_from_json);   //отладка
-            $this->add_to_log('id_of_exists_product ' . $id_of_exists_product);   //отладка
-
             if ($id_of_exists_product == false) {
-                $this->add_to_log('Создаем продукт');   //отладка
-                $this->create_product($product_from_json, $exists_categories);
+                $this->add_to_response_message('Создаем продукт ' . $product_from_json['name']);
+                $this->create_product($product_from_json);
 
             } else {
-                $this->add_to_log('Обновляем продукт');   //отладка
+                $this->add_to_response_message('Обновляем продукт ' . $product_from_json['name']);
                 $this->update_product($product_from_json, $id_of_exists_product);
 
             }
@@ -159,19 +190,19 @@ class ControllerApiExchange1c extends Controller
 
         $counter_price_diff = 0;
         $counter_quantity_diff = 0;
-        foreach ($query_all_products->rows as $product_opencart){
+        foreach ($query_all_products->rows as $product_opencart) {
             $id_1c = $product_opencart['id_1c'];
 
             $product_exists_json = array_key_exists($id_1c, $stock_balance);
 
-            if ( ! $product_exists_json){
+            if (!$product_exists_json) {
                 continue;
             } else {
                 $product_from_json = $stock_balance[$id_1c];
             }
 
-            if ($product_from_json['price'] != $product_opencart['price']){
-                $counter_price_diff ++;
+            if ($product_from_json['price'] != $product_opencart['price']) {
+                $counter_price_diff++;
                 $part_1 .=
                     " WHEN id_1c = '" . $this->db->escape($id_1c) .
                     "' THEN " . (double)$product_from_json['price'];
@@ -185,13 +216,13 @@ class ControllerApiExchange1c extends Controller
             }
         }
 
-        if ($counter_price_diff > 0){
+        if ($counter_price_diff > 0) {
             $part_1 .= " ELSE price END)";
         } else {
             unset($part_1);
         }
 
-        if ($counter_quantity_diff > 0){
+        if ($counter_quantity_diff > 0) {
             $part_2 .= " ELSE quantity END)";
         } else {
             unset($part_2);
@@ -201,14 +232,14 @@ class ControllerApiExchange1c extends Controller
         if (isset($part_1) && isset($part_2)) {
             $sql_update_balance = $part_0 . $part_1 . ' ,' . $part_2;
 
-        } elseif (isset($part_1) && ! isset($part_2)){
+        } elseif (isset($part_1) && !isset($part_2)) {
             $sql_update_balance = $part_0 . $part_1;
 
-        } elseif ( ! isset($part_1) && isset($part_2)){
+        } elseif (!isset($part_1) && isset($part_2)) {
             $sql_update_balance = $part_0 . $part_2;
         }
 
-        if (isset($sql_update_balance)){
+        if (isset($sql_update_balance)) {
             $this->sql_query($sql_update_balance);
         }
 
@@ -254,7 +285,8 @@ class ControllerApiExchange1c extends Controller
         }
     }
 
-    private function set_image_to_product($filename, $image_name, $folder_name){
+    private function set_image_to_product($filename, $image_name, $folder_name)
+    {
 
         $this->add_to_log("Старт функции set_image_to_product");
 
@@ -266,14 +298,14 @@ class ControllerApiExchange1c extends Controller
         //$image_name_first_part - это id_1c без дефисов
 
         $sql_get_product_images =
-            "SELECT p.product_id, id_1c, p.image AS main_image, pi.image AS additional_image" .
+            "SELECT p.product_id, product_id_1c, p.image AS main_image, pi.image AS additional_image" .
             " FROM " . DB_PREFIX . "product AS p" .
             " LEFT JOIN " . DB_PREFIX . "product_image AS pi ON p.product_id = pi.product_id" .
             " WHERE REPLACE(id_1c , '-' , '') = '" . $this->db->escape($image_name_first_part) . "'";
 
         $query = $this->sql_query($sql_get_product_images);
 
-        if($query->num_rows == 0){
+        if ($query->num_rows == 0) {
 
             $this->add_to_log('НЕ найден товар с идентификатором ' . $image_name_first_part);
             return false;
@@ -285,14 +317,14 @@ class ControllerApiExchange1c extends Controller
         $main_image = '';
         $it_additional_image = false;
 
-        foreach($query->rows as $row){
+        foreach ($query->rows as $row) {
 
-            if($row['main_image'] != ''){
+            if ($row['main_image'] != '') {
                 $isset_main_image = true;
                 $main_image = $row['main_image'];
             }
 
-            if($row['additional_image'] == ($folder_name . $image_name)){
+            if ($row['additional_image'] == ($folder_name . $image_name)) {
                 $it_additional_image = true;
             }
         }
@@ -301,7 +333,7 @@ class ControllerApiExchange1c extends Controller
         $this->add_to_log('main_image ' . $main_image);
         $this->add_to_log('$it_additional_image ' . $it_additional_image);
 
-        if (!$isset_main_image){
+        if (!$isset_main_image) {
             //У товара нет основной картинки. Ставим загруженную.
 
             $this->add_to_log("Загружаем картинку как основную");
@@ -330,36 +362,33 @@ class ControllerApiExchange1c extends Controller
     private function get_exists_categories()
     {
 
-        $this->add_to_log('Старт функции get_exists_categories');
-
         $query =
-            $this->db->query("SELECT category_id, name FROM " . DB_PREFIX . "category_description");
+            $this->sql_query("SELECT category_id, category_id_1c FROM " . DB_PREFIX .
+                "category WHERE category_id_1c IS NOT NULL");
 
-        $this->add_to_log('Запрос в  функции get_exists_categories выполнен');
-
-        $exists_categories = array();
-
-        foreach ($query->rows as $result) {
-            $exists_categories[$result['category_id']] = $result['name'];
-        }
-
-        return $exists_categories;
+        return $query->rows;
 
     }
 
-    private function create_category($name)
+    private function create_category($category)
     {
+        $category_parent_id_1c = $category['parent_id_1c'];
+        $category_name = $category['name'];
+        $category_id_1c = $category['category_id_1c'];
 
-        $this->add_to_log('Старт функции create_category'); //отладка
+        if ($category_parent_id_1c) {
+            $parent_opencart_id = $this->get_parent_opencart_id($category_parent_id_1c);
+        } else {
+            $parent_opencart_id = 0;
+        }
 
-        //СОздаем категорию
         $sql_category = "INSERT INTO " . DB_PREFIX . "category SET " .
-            "parent_id = 0" .
-            ", `top` = 1" .
+            "`parent_id` = '" . $this->db->escape($parent_opencart_id) .
+            "', `top` = 1" .
             ", `column` = 1" .
-            ", sort_order = 0" .
-            ", status = 1" .
-            ", date_modified = NOW(), date_added = NOW()";
+            ", `status` = 1" .
+            ", `category_id_1c` = '" . $this->db->escape($category_id_1c) .
+            "', `date_modified` = NOW(), `date_added` = NOW()";
 
         $this->sql_query($sql_category);
 
@@ -369,22 +398,48 @@ class ControllerApiExchange1c extends Controller
         $sql_category_description = "INSERT INTO " . DB_PREFIX . "category_description SET " .
             "category_id = " . (int)$category_id .
             ", language_id = 1" .
-            ", name = '" . $this->db->escape($name) .
-            "', meta_title =  '" . $this->db->escape($name) . "'";
+            ", name = '" . $this->db->escape($category_name) .
+            "', meta_title =  '" . $this->db->escape($category_name) . "'";
 
         $this->sql_query($sql_category_description);
 
 
-        // Устанавливаем иерарзию для категории
-        $level = 0;
+        // Устанавливаем иерархию для категории
 
-        $sql_category_path = "INSERT INTO `" . DB_PREFIX . "category_path` SET `category_id` = '" . (int)$category_id .
-            "', `path_id` = '" . (int)$category_id . "', `level` = '" . (int)$level . "'";
+        if (!$parent_opencart_id) {
 
-        $this->sql_query($sql_category_path);
+            $level = 0;
+
+            $sql_category_path =
+                "INSERT INTO `" . DB_PREFIX . "category_path` SET `category_id` = '" . (int)$category_id .
+                "', `path_id` = '" . (int)$category_id . "', `level` = '" . (int)$level . "'";
+
+            $this->sql_query($sql_category_path);
+
+        } else {
+            // MySQL Hierarchical Data Closure Table Pattern
+            $level = 0;
+
+            $query = $this->sql_query("SELECT * FROM `" . DB_PREFIX . "category_path` WHERE category_id = '" .
+                (int)$parent_opencart_id . "' ORDER BY `level` ASC");
+
+            foreach ($query->rows as $result) {
+                $this->sql_query("INSERT INTO `" . DB_PREFIX . "category_path` SET `category_id` = '" .
+                    (int)$category_id .
+                    "', `path_id` = '" . (int)$result['path_id'] . "', `level` = '" . (int)$level . "'");
+
+                $level++;
+            }
+
+            $this->sql_query("INSERT INTO `" . DB_PREFIX . "category_path` SET `category_id` = '" . (int)$category_id .
+                "', `path_id` = '" . (int)$category_id . "', `level` = '" . (int)$level . "'");
+
+            ////////
+        }
+
 
         //SEO url
-        $seo_url = $this->generate_seo_url($name);
+        $seo_url = $this->generate_seo_url($category_name);
 
         $sql_seo_url = "INSERT INTO " . DB_PREFIX . "seo_url SET store_id = 0" .
             ", language_id = 1" . ", query = 'category_id=" . (int)$category_id .
@@ -398,38 +453,152 @@ class ControllerApiExchange1c extends Controller
 
         $this->sql_query($sql_category_to_shop);
 
-        $this->add_to_log('Функция create_category завершила выполнение'); //отладка
+    }
+
+    private function get_parent_opencart_id($category_parent_id_1c)
+    {
+
+        if ($category_parent_id_1c == '') {
+            return 0;
+        }
+
+        $sql = "SELECT category_id FROM " . DB_PREFIX . "category WHERE category_id_1c = '"
+            . $this->db->escape($category_parent_id_1c) . "'";
+
+        $query = $this->sql_query($sql);
+
+        if ($query->num_rows > 0) {
+            return $query->row['category_id'];
+        }
+
+        return 0;
+
+    }
+
+    private function update_category($category_id, $category_from_json)
+    {
+
+        $category_parent_id_1c = $category_from_json['parent_id_1c'];
+        $category_name_1c = $category_from_json['name'];
+        $category_id_1c = $category_from_json['category_id_1c'];
+
+        //обновляем название
+
+        $sql_update_name = "UPDATE " . DB_PREFIX . "category_description SET " .
+            "name = '" . $this->db->escape($category_name_1c) . "'" .
+            " WHERE category_id = '" . $this->db->escape($category_id) .
+            "' AND name <> '" . $this->db->escape($category_name_1c) . "'";
+
+        $this->sql_query($sql_update_name);
+
+        //обновляем родителя
+
+        $parent_opencart_id = $this->get_parent_opencart_id($category_parent_id_1c);
+
+        if ($parent_opencart_id) {
+
+            $sql_update_category_parent = "UPDATE " . DB_PREFIX . "category SET " .
+                "`parent_id` = " . $this->db->escape($parent_opencart_id) .
+                ", `date_modified` = NOW() WHERE `category_id_1c` = '" . $this->db->escape($category_id_1c) . "'";
+
+            $this->sql_query($sql_update_category_parent);
+        }
+
+        //обновляем вложенность
+
+        // MySQL Hierarchical Data Closure Table Pattern
+        $query =
+            $this->db->query("SELECT * FROM `" . DB_PREFIX . "category_path` WHERE path_id = '" . (int)$category_id .
+                "' ORDER BY level ASC");
+
+        if ($query->rows) {
+            foreach ($query->rows as $category_path) {
+                // Delete the path below the current one
+                $this->db->query("DELETE FROM `" . DB_PREFIX . "category_path` WHERE category_id = '" .
+                    (int)$category_path['category_id'] . "' AND level < '" . (int)$category_path['level'] . "'");
+
+                $path = array();
+
+                // Get the nodes new parents
+                $query = $this->db->query("SELECT * FROM `" . DB_PREFIX . "category_path` WHERE category_id = '" .
+                    (int)$parent_opencart_id . "' ORDER BY level ASC");
+
+                foreach ($query->rows as $result) {
+                    $path[] = $result['path_id'];
+                }
+
+                // Get whats left of the nodes current path
+                $query = $this->db->query("SELECT * FROM `" . DB_PREFIX . "category_path` WHERE category_id = '" .
+                    (int)$category_path['category_id'] . "' ORDER BY level ASC");
+
+                foreach ($query->rows as $result) {
+                    $path[] = $result['path_id'];
+                }
+
+                // Combine the paths with a new level
+                $level = 0;
+
+                foreach ($path as $path_id) {
+                    $this->db->query("REPLACE INTO `" . DB_PREFIX . "category_path` SET category_id = '" .
+                        (int)$category_path['category_id'] . "', `path_id` = '" . (int)$path_id . "', level = '" .
+                        (int)$level . "'");
+
+                    $level++;
+                }
+            }
+        } else {
+            // Delete the path below the current one
+            $this->db->query("DELETE FROM `" . DB_PREFIX . "category_path` WHERE category_id = '" . (int)$category_id .
+                "'");
+
+            // Fix for records with no paths
+            $level = 0;
+
+            $query = $this->db->query("SELECT * FROM `" . DB_PREFIX . "category_path` WHERE category_id = '" .
+                (int)$parent_opencart_id . "' ORDER BY level ASC");
+
+            foreach ($query->rows as $result) {
+                $this->db->query("INSERT INTO `" . DB_PREFIX . "category_path` SET category_id = '" .
+                    (int)$category_id . "', `path_id` = '" . (int)$result['path_id'] . "', level = '" . (int)$level .
+                    "'");
+
+                $level++;
+            }
+
+            $this->db->query("REPLACE INTO `" . DB_PREFIX . "category_path` SET category_id = '" . (int)$category_id .
+                "', `path_id` = '" . (int)$category_id . "', level = '" . (int)$level . "'");
+        }
 
     }
 
     private function get_products_id_1c()
     {
         $query =
-            $this->sql_query("SELECT DISTINCT product_id, id_1c FROM "
-                . DB_PREFIX . "product WHERE id_1c IS NOT NULL");
+            $this->sql_query("SELECT DISTINCT product_id, product_id_1c FROM "
+                . DB_PREFIX . "product WHERE product_id_1c IS NOT NULL");
 
         $products_id_1c = array();
 
         foreach ($query->rows as $result) {
-            $products_id_1c[$result['product_id']] = $result['id_1c'];
+            $products_id_1c[$result['product_id']] = $result['product_id_1c'];
         }
 
         return $products_id_1c;
     }
 
-    private function update_product($product_from_json, $exists_categories)
+    private function update_product($product_from_json, $id_of_exists_product)
     {
 
-        $this->add_to_log('Старт функции update_product'); //отладка
+        $products_id_1c = $product_from_json['product_id_1c'];
 
-        $id_1c = $product_from_json['product_id_1c'];
+        $category_id = $this->category_in_list($product_from_json['group_id_1c']);
 
         //Получаем описание товара
         $sql_product =
             "SELECT p.product_id, p.model, p.stock_status_id, p.minimum, d.name, d.meta_title" .
             " FROM oc_product AS p" .
             " LEFT JOIN oc_product_description AS d ON p.product_id = d.product_id" .
-            " WHERE p.id_1c = '" . $this->db->escape($id_1c) . "'";
+            " WHERE p.product_id_1c = '" . $this->db->escape($products_id_1c) . "'";
 
         $query = $this->sql_query($sql_product);
 
@@ -445,35 +614,45 @@ class ControllerApiExchange1c extends Controller
         //В опенкарт может быть больше одной категории
 
         $sql_categories =
-            "SELECT cd.category_id, cd.name " .
-            " FROM " . DB_PREFIX . "category_description AS cd" .
-            " INNER JOIN " . DB_PREFIX . "product_to_category AS pc" .
-            " ON cd.category_id = pc.category_id" .
-            " WHERE pc.product_id = " . $id_opencart;
+
+            "SELECT category_id " .
+            " FROM " . DB_PREFIX . "product_to_category " .
+            " WHERE product_id = '" . $this->db->escape($id_opencart) . "' AND " .
+            "category_id = '" . $this->db->escape($category_id) . "'";
+
 
         $query = $this->sql_query($sql_categories);
 
-        $isset_category = $this->this_category_isset_in_product($product_from_json, $query->rows);
+        if ($query->num_rows == 0) {
+            // delete old categories
+            $sql_delete_old_categories =
+                "DELETE FROM " . DB_PREFIX . "product_to_category WHERE " .
+                " product_id = '" . $this->db->escape($id_opencart) . "'";
 
-        if (!$isset_category) {
-            $this->change_product_category($id_opencart, $product_from_json, $query->rows);
+            $this->sql_query($sql_delete_old_categories);
+
+            //set new category
+            $sql_set_new_category =
+                "INSERT INTO " . DB_PREFIX . "product_to_category SET " .
+                " product_id = '" . $this->db->escape($id_opencart) .
+                "' , category_id = '" . $this->db->escape($category_id) . "'";
+
+            $this->sql_query($sql_set_new_category);
         }
 
     }
 
-    private function create_product($product_from_json, $exists_categories)
+    private function create_product($product_from_json)
     {
-
-        $this->add_to_log('Старт функции create_product');
 
         //Создаем продукт
         $sql_product = "INSERT INTO " . DB_PREFIX . "product SET " .
             " model = '" . $product_from_json['model'] . "'" .
-            ", stock_status_id =" . (int)($product_from_json['stock_status_id']) .
-            ", id_1c = '" . $this->db->escape($product_from_json['product_id_1c']) .
+            ", stock_status_id = 7" .
+            ", product_id_1c = '" . $this->db->escape($product_from_json['product_id_1c']) .
             "', quantity = 0" .
             ", minimum = 1" .
-            ", price = 1" .
+            ", price = 0" .
             ", status = 1" .
             ", date_added = NOW(), date_modified = NOW()";
 
@@ -488,7 +667,7 @@ class ControllerApiExchange1c extends Controller
             "', description = '" . $this->db->escape($product_from_json['description']) .
             "', tag = '" .
             "', meta_title = '" . $this->db->escape($product_from_json['name']) .
-            "', meta_description = '" . $this->db->escape($product_from_json['meta_description']) .
+            "', meta_description = '" .
             "', meta_keyword ='' ";
 
         $this->sql_query($sql_product_description);
@@ -503,14 +682,13 @@ class ControllerApiExchange1c extends Controller
 
 
         $sql_product_to_store = "INSERT INTO " . DB_PREFIX . "product_to_store SET store_id = 0"
-            .", product_id=" . (int)$product_id;
+            . ", product_id=" . (int)$product_id;
 
         $this->sql_query($sql_product_to_store);
 
+        $category_id = $this->get_product_category_id($product_from_json);
 
-        $category_id = $this->get_product_category_id($product_from_json, $exists_categories);
-
-        if ($category_id){
+        if ($category_id) {
             $sql_product_to_category = "INSERT INTO " . DB_PREFIX . "product_to_category SET product_id = " .
                 (int)$product_id . ", category_id = " . (int)$category_id;
 
@@ -519,17 +697,39 @@ class ControllerApiExchange1c extends Controller
 
         $this->cache->delete('product');
 
-        $this->add_to_log('Функция create_product завершила работу');
-
     }
 
-    private function get_product_category_id($product_from_json, $exists_categories)
+    private function category_in_list($category_id_1c)
+    {
+
+        //$list содержит двумерный массив с category_id, category_id_1c
+
+        $list = $this->get_exists_categories();
+
+        $category_id = false;
+
+        foreach ($list as $category_from_list) {
+
+            if ($category_from_list['category_id_1c'] == $category_id_1c) {
+                $category_id = $category_from_list['category_id'];
+                return $category_id;
+            }
+
+        }
+        return $category_id;
+    }
+
+    private function get_product_category_id($product_from_json)
     {
 
         if (isset($product_from_json['group_id_1c'])) {
-            $group_id_1c = $product_from_json['group_id_1c'];
-            $category = array_search($group_id_1c, $exists_categories);
-            return $category;
+
+            $category_id_1c = $product_from_json['group_id_1c'];
+
+            $category_id = $this->category_in_list($category_id_1c);
+
+            return $category_id;
+
         } else {
             return false;
         }
@@ -542,23 +742,22 @@ class ControllerApiExchange1c extends Controller
             $query = $this->db->query($sql);
             return $query;
 
-        } catch (Exception $e){
+        } catch (Exception $e) {
             $this->add_to_log("Ошибка при выполнении запроса SQL");
             $this->add_to_log($sql);
+            $this->add_to_response_message("Ошибка при выполнении запроса SQL");
+            $this->add_to_response_message($sql);
             return false;
         }
     }
 
     private function compare_product_description($product_from_json, $product_from_opencart)
     {
-        $this->add_to_log('Старт функции compare_product_description');
 
         // поля в $product_from_opencart
         // product_id, model, stock_status_id, minimum, name, meta_title
 
         if ($product_from_opencart['model'] == $product_from_json['model'] &&
-            $product_from_opencart['stock_status_id'] == $product_from_json['stock_status_id'] &&
-            $product_from_opencart['minimum'] == $product_from_json['minimum'] &&
             $product_from_opencart['name'] == $product_from_json['name']) {
 
             return true;
@@ -574,8 +773,8 @@ class ControllerApiExchange1c extends Controller
 
         $sql_product_change_model = "UPDATE " . DB_PREFIX . "product SET model = '" .
             $this->db->escape($product_from_json['model']) .
-            "', stock_status_id = '" . (integer)$product_from_json['stock_status_id'] .
-            "', minimum = " . (integer)$product_from_json['minimum'] .
+            "', stock_status_id = 7" .
+            ", minimum = 1" .
             " WHERE product_id = '" . $this->db->escape($id_opencart) . "'";
 
         $this->sql_query($sql_product_change_model);
@@ -583,7 +782,6 @@ class ControllerApiExchange1c extends Controller
         $sql_product_change_description = "UPDATE " . DB_PREFIX . "product_description SET " .
             "name = '" . $this->db->escape($product_from_json['name']) .
             "', description = '" . $this->db->escape($product_from_json['description']) .
-            "', meta_description = '" . $this->db->escape($product_from_json['meta_description']) .
             "', meta_title = '" . $this->db->escape($product_from_json['name']) .
             "' WHERE product_id = '" . $id_opencart . "'";
 
@@ -593,47 +791,9 @@ class ControllerApiExchange1c extends Controller
 
     }
 
-    private function this_category_isset_in_product($product, $categories_from_query)
+
+    private function create_or_get_directory($path)
     {
-
-        if (!isset($product['$category'])) {
-            return true;
-        }
-
-        foreach ($categories_from_query as $category) {
-            if ($category['name'] == $product['$category']) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private function change_product_category($id_opencart, $product_from_json, $categories_from_query)
-    {
-
-        $this->add_to_log('Старт функции change_product_category');
-
-        $category_from_json = $product_from_json['category'];
-
-        foreach ($categories_from_query as $category) {
-            if ($category['name'] == $category_from_json) {
-
-                $category_id = $category['category_id'];
-                //нужная категория найдена в списке категорий, добавим ее в продукт
-
-                $sql_set_category = "INSERT INTO " . DB_PREFIX . "product_to_category SET " .
-                    "product_id = " . (integer)$id_opencart .
-                    ", category_id = " . (integer)$category_id;
-
-                $this->sql_query($sql_set_category);
-
-                break;
-
-            }
-        }
-    }
-
-    private function create_or_get_directory($path){
 
         if (!file_exists($path)) {
             mkdir($path, 0777);
@@ -643,17 +803,18 @@ class ControllerApiExchange1c extends Controller
         return $path;
     }
 
-    private function get_filename_first_part($file_name, $delimeter){
+    private function get_filename_first_part($file_name, $delimeter)
+    {
 
         $pieces = explode($delimeter, $file_name);
 
         return $pieces[0];
     }
 
-    private function generate_seo_url($name, $id='')
+    private function generate_seo_url($name, $id = '')
     {
 
-        if ($id == ''){
+        if ($id == '') {
             $seo_url = $this->translit($name);
         } else {
             $seo_url = $this->translit($name) . '-' . (string)$id;
@@ -686,13 +847,18 @@ class ControllerApiExchange1c extends Controller
     private function add_to_log($message = '')
     {
 
-        $log = __DIR__ . "/log_exchange.log";
+        $log = __DIR__ . "/log_exchange.txt";
 
-        $message = date('Y-m-d H:i:s') . " " .  $message . PHP_EOL;
+        $message = date('Y-m-d H:i:s') . " " . $message . PHP_EOL;
 
         $handle = fopen($log, "a");
         fwrite($handle, $message);
         fclose($handle);
+    }
+
+    private function add_to_response_message($row)
+    {
+        $this->message[] = $row;
     }
 
 }
