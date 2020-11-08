@@ -33,10 +33,9 @@ class ControllerApiExchange1c extends Controller
 
     }
 
-    public function load_data()
-    {
+    public function load(){
 
-        if ($_SERVER["CONTENT_TYPE"] == "application/json" && $_SERVER['REQUEST_METHOD'] == "POST") {
+        if ($_SERVER['REQUEST_METHOD'] == "POST" && $_SERVER["CONTENT_TYPE"] == "application/json") {
 
             $this->prepare_db();
 
@@ -46,10 +45,13 @@ class ControllerApiExchange1c extends Controller
             //отправка отчета
             $this->send_response_message();
 
-        } elseif (strstr($_SERVER["CONTENT_TYPE"], "image") && $_SERVER['REQUEST_METHOD'] == "POST") {
+        } elseif ($_SERVER['REQUEST_METHOD'] == "POST" && strstr($_SERVER["CONTENT_TYPE"], "image")) {
             $this->load_image();
-        }
+            echo 'success';
 
+        } elseif ($_SERVER['REQUEST_METHOD'] == "GET") {
+            echo 'success';
+        }
     }
 
     private function prepare_db()
@@ -298,10 +300,10 @@ class ControllerApiExchange1c extends Controller
         //$image_name_first_part - это id_1c без дефисов
 
         $sql_get_product_images =
-            "SELECT p.product_id, product_id_1c, p.image AS main_image, pi.image AS additional_image" .
+            "SELECT p.product_id, p.product_id_1c, p.image AS main_image, pi.image AS additional_image" .
             " FROM " . DB_PREFIX . "product AS p" .
             " LEFT JOIN " . DB_PREFIX . "product_image AS pi ON p.product_id = pi.product_id" .
-            " WHERE REPLACE(id_1c , '-' , '') = '" . $this->db->escape($image_name_first_part) . "'";
+            " WHERE p.product_id_1c = '" . $this->db->escape($image_name_first_part) . "'";
 
         $query = $this->sql_query($sql_get_product_images);
 
