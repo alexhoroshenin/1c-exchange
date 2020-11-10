@@ -99,9 +99,9 @@ class ControllerApiExchange1c extends Controller
             $this->load_products($decode_input['products']);
         }
 
-        if (isset($decode_input['stock_balance'])) {
+        if (isset($decode_input['offers'])) {
             $this->add_to_response_message("Загрузка остатков");
-            $this->load_stock_balance($decode_input['stock_balance']);
+            $this->load_stock_balance($decode_input['offers']);
         }
     }
 
@@ -181,8 +181,8 @@ class ControllerApiExchange1c extends Controller
 
         $this->add_to_log('Cтарт функции load_stock_balance');
 
-        $sql_all_products = "SELECT product_id, price, quantity, id_1c FROM " . DB_PREFIX . "product" .
-            " WHERE id_1c IS NOT NULL";
+        $sql_all_products = "SELECT product_id, price, quantity, product_id_1c FROM " . DB_PREFIX . "product" .
+            " WHERE product_id_1c IS NOT NULL";
 
         $query_all_products = $this->sql_query($sql_all_products);
 
@@ -193,28 +193,26 @@ class ControllerApiExchange1c extends Controller
         $counter_price_diff = 0;
         $counter_quantity_diff = 0;
         foreach ($query_all_products->rows as $product_opencart) {
-            $id_1c = $product_opencart['id_1c'];
+            $id_1c = $product_opencart['product_id_1c'];
 
-            $product_exists_json = array_key_exists($id_1c, $stock_balance);
+            $product_from_json = $this->array_return_row_by_value($id_1c, $stock_balance);
 
-            if (!$product_exists_json) {
+            if (!$product_from_json) {
                 continue;
-            } else {
-                $product_from_json = $stock_balance[$id_1c];
             }
 
             if ($product_from_json['price'] != $product_opencart['price']) {
                 $counter_price_diff++;
                 $part_1 .=
-                    " WHEN id_1c = '" . $this->db->escape($id_1c) .
+                    " WHEN product_id_1c = '" . $this->db->escape($id_1c) .
                     "' THEN " . (double)$product_from_json['price'];
             }
 
-            if ($product_from_json['balance'] != $product_opencart['quantity']) {
+            if ($product_from_json['quantity'] != $product_opencart['quantity']) {
                 $counter_quantity_diff++;
                 $part_2 .=
-                    " WHEN id_1c = '" . $this->db->escape($id_1c) .
-                    "' THEN " . (double)$product_from_json['balance'];
+                    " WHEN product_id_1c = '" . $this->db->escape($id_1c) .
+                    "' THEN " . (double)$product_from_json['quantity'];
             }
         }
 
@@ -248,6 +246,19 @@ class ControllerApiExchange1c extends Controller
         $this->add_to_log('Конец функции load_stock_balance');
 
 
+    }
+
+    private function array_return_row_by_value($searching_value, $array){
+
+        foreach ($array as $row){
+            foreach ($row as $key => $value){
+                if ($value == $searching_value){
+                    return $row;
+                }
+            }
+        }
+
+        return false;
     }
 
     private function load_image()
