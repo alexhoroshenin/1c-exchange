@@ -3,8 +3,10 @@
 В таблицах товаров и категорий важно создать ограничение на уникальность поля product_id_1c,
 category_id_1c, чтобы не дублировать товары
 
-ALTER TABLE oc_product ADD COLUMN product_id_1c VARCHAR(100) UNIQUE;
-ALTER TABLE oc_product ADD UNIQUE (product_id_1c);
+ALTER TABLE oc_product ADD COLUMN product_id_1c VARCHAR(100) DEFAULT NULL;
+необязательно -- ALTER TABLE oc_product ADD UNIQUE (product_id_1c);
+
+ALTER TABLE oc_category ADD COLUMN category_id_1c VARCHAR(100) DEFAULT NULL;
 
 Возможно будет ошибка в пункте 1: Invalid default value for 'date_available'
 Для этого нужно установить дефолтные значения для этого поля '2000-01-01'
